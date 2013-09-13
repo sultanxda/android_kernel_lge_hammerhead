@@ -93,6 +93,9 @@ struct ppp_status {
 	struct sw_sync_timeline *timeline;
 	int timeline_value;
 
+	struct timer_list free_bw_timer;
+	struct work_struct free_bw_work;
+	bool bw_on;
 };
 
 static struct ppp_status *ppp_stat;
@@ -369,7 +372,13 @@ int mdp3_ppp_turnon(struct msm_fb_data_type *mfd, int on_off)
 		pr_err("%s: mdp3_clk_enable failed\n", __func__);
 		return rc;
 	}
-	mdp3_bus_scale_set_quota(MDP3_CLIENT_PPP, ab, ib);
+	rc = mdp3_bus_scale_set_quota(MDP3_CLIENT_PPP, ab, ib);
+	if (rc < 0) {
+		mdp3_clk_enable(!on_off);
+		pr_err("%s: scale_set_quota failed\n", __func__);
+		return rc;
+	}
+	ppp_stat->bw_on = on_off;
 	return 0;
 }
 
@@ -914,6 +923,11 @@ void mdp3_ppp_req_pop(struct blit_req_queue *req_q)
 	req_q->pop_idx = (req_q->pop_idx + 1) % MDP3_PPP_MAX_LIST_REQ;
 }
 
+void mdp3_free_fw_timer_func(unsigned long arg)
+{
+	schedule_work(&ppp_stat->free_bw_work);
+}
+
 static void mdp3_ppp_blit_wq_handler(struct work_struct *work)
 {
 	struct msm_fb_data_type *mfd = ppp_stat->mfd;
@@ -923,8 +937,21 @@ static void mdp3_ppp_blit_wq_handler(struct work_struct *work)
 	mutex_lock(&ppp_stat->config_ppp_mutex);
 	req = mdp3_ppp_next_req(&ppp_stat->req_q);
 
-	mdp3_iommu_enable(MDP3_CLIENT_PPP);
-	mdp3_ppp_turnon(mfd, 1);
+	if (!ppp_stat->bw_on) {
+		rc = mdp3_iommu_enable(MDP3_CLIENT_PPP);
+		if (rc < 0) {
+			mutex_unlock(&ppp_stat->config_ppp_mutex);
+			pr_err("%s: mdp3_iommu_enable failed\n", __func__);
+			return;
+		}
+		mdp3_ppp_turnon(mfd, 1);
+		if (rc < 0) {
+			mdp3_iommu_disable(MDP3_CLIENT_PPP);
+			mutex_unlock(&ppp_stat->config_ppp_mutex);
+			pr_err("%s: Enable ppp resources failed\n", __func__);
+			return;
+		}
+	}
 	while (req) {
 		mdp3_ppp_wait_for_fence(req);
 		for (i = 0; i < req->count; i++) {
