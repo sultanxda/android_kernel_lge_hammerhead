@@ -621,7 +621,7 @@ static int mdss_dsi_dfps_config(struct mdss_panel_data *pdata, int new_fps)
 				panel_data);
 
 	if (!ctrl_pdata->panel_data.panel_info.dynamic_fps) {
-		pr_err("%s: Dynamic fps not enabled for this panel\n",
+		pr_debug("%s: Dynamic fps not enabled for this panel\n",
 					__func__);
 		return -EINVAL;
 	}
