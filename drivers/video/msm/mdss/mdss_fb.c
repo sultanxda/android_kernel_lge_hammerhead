@@ -1619,7 +1619,8 @@ static int __mdss_fb_perform_commit(struct msm_fb_data_type *mfd)
 			pr_err("pan display failed %x on fb%d\n", ret,
 					mfd->index);
 	}
-	mdss_fb_update_backlight(mfd);
+	if (!ret)
+		mdss_fb_update_backlight(mfd);
 	if (IS_ERR_VALUE(ret) || !sync_pt_data->flushed)
 		mdss_fb_signal_timeline(sync_pt_data);
 
