@@ -19,6 +19,7 @@
 #include <linux/uaccess.h>
 #include <linux/spinlock.h>
 #include <linux/delay.h>
+#include <linux/pm_runtime.h>
 #include <mach/msm_bus.h>
 #include <mach/msm_bus_board.h>
 #if defined(CONFIG_LCD_KCAL)
@@ -1691,6 +1692,12 @@ int mdss_mdp_pp_setup_locked(struct mdss_mdp_ctl *ctl)
 	bool valid_ad_panel = true;
 	if ((!ctl->mfd) || (!mdss_pp_res))
 		return -EINVAL;
+
+	ret = pm_runtime_get_sync(&ctl->mfd->pdev->dev);
+	if (IS_ERR_VALUE(ret)) {
+		pr_err("unable to resume with pm_runtime_get_sync ret=%d\n", ret);
+		goto exit;
+	}
 
 	/* treat fb_num the same as block logical id*/
 	disp_num = ctl->mfd->index;
