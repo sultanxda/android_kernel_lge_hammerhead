@@ -606,7 +606,7 @@ static u32 mdss_mdp_get_vbp_factor_max(struct mdss_mdp_ctl *ctl)
 		struct mdss_mdp_ctl *ctl = mdata->ctl_off + i;
 		u32 vbp_fac;
 
-		if (mdss_mdp_ctl_is_power_on(ctl)) {
+		if (ctl->power_on) {
 			vbp_fac = mdss_mdp_get_vbp_factor(ctl);
 			vbp_max = max(vbp_max, vbp_fac);
 		}
@@ -627,7 +627,7 @@ static bool mdss_mdp_video_mode_intf_connected(struct mdss_mdp_ctl *ctl)
 	for (i = 0; i < mdata->nctl; i++) {
 		struct mdss_mdp_ctl *ctl = mdata->ctl_off + i;
 
-		if (ctl->is_video_mode && mdss_mdp_ctl_is_power_on(ctl)) {
+		if (ctl->is_video_mode && ctl->power_on) {
 			pr_debug("video interface connected ctl:%d\n",
 			ctl->num);
 			return true;
@@ -859,7 +859,7 @@ static inline void mdss_mdp_ctl_perf_update_bus(struct mdss_mdp_ctl *ctl)
 	for (i = 0; i < mdata->nctl; i++) {
 		struct mdss_mdp_ctl *ctl;
 		ctl = mdata->ctl_off + i;
-		if (mdss_mdp_ctl_is_power_on(ctl)) {
+		if (ctl->power_on) {
 			bw_sum_of_intfs += ctl->cur_perf.bw_ctl;
 			pr_debug("c=%d bw=%llu\n", ctl->num,
 				ctl->cur_perf.bw_ctl);
@@ -903,7 +903,7 @@ void mdss_mdp_ctl_perf_release_bw(struct mdss_mdp_ctl *ctl)
 	for (i = 0; i < mdata->nctl; i++) {
 		struct mdss_mdp_ctl *ctl = mdata->ctl_off + i;
 
-		if (mdss_mdp_ctl_is_power_on(ctl))
+		if (ctl->power_on && ctl->is_video_mode)
 			goto exit;
 	}
 
@@ -968,10 +968,9 @@ static void mdss_mdp_ctl_perf_update(struct mdss_mdp_ctl *ctl,
 	 */
 	is_bw_released = !mdss_mdp_ctl_perf_get_transaction_status(ctl);
 
-	if (mdss_mdp_ctl_is_power_on(ctl)) {
+	if (ctl->power_on) {
 		if (is_bw_released || params_changed)
 			mdss_mdp_perf_calc_ctl(ctl, new);
-
 		/*
 		 * if params have just changed delay the update until
 		 * later once the hw configuration has been flushed to
@@ -1009,7 +1008,7 @@ static void mdss_mdp_ctl_perf_update(struct mdss_mdp_ctl *ctl,
 		for (i = 0; i < mdata->nctl; i++) {
 			struct mdss_mdp_ctl *ctl;
 			ctl = mdata->ctl_off + i;
-			if (mdss_mdp_ctl_is_power_on(ctl))
+			if (ctl->power_on)
 				clk_rate = max(ctl->cur_perf.mdp_clk_rate,
 					       clk_rate);
 		}
@@ -1078,7 +1077,7 @@ static int mdss_mdp_ctl_free(struct mdss_mdp_ctl *ctl)
 	ctl->intf_num = MDSS_MDP_NO_INTF;
 	ctl->intf_type = MDSS_MDP_NO_INTF;
 	ctl->is_secure = false;
-	ctl->power_state = MDSS_PANEL_POWER_OFF;
+	ctl->power_on = false;
 	ctl->start_fnc = NULL;
 	ctl->stop_fnc = NULL;
 	ctl->prepare_fnc = NULL;
@@ -1226,7 +1225,7 @@ struct mdss_mdp_mixer *mdss_mdp_wb_mixer_alloc(int rotator)
 	ctl->mixer_left = mixer;
 
 	ctl->start_fnc = mdss_mdp_writeback_start;
-	ctl->power_state = MDSS_PANEL_POWER_ON;
+	ctl->power_on = true;
 	ctl->wb_type = (rotator ? MDSS_MDP_WB_CTL_TYPE_BLOCK :
 			MDSS_MDP_WB_CTL_TYPE_LINE);
 	mixer->ctl = ctl;
@@ -1259,7 +1258,7 @@ int mdss_mdp_wb_mixer_destroy(struct mdss_mdp_mixer *mixer)
 	pr_debug("destroy ctl=%d mixer=%d\n", ctl->num, mixer->num);
 
 	if (ctl->stop_fnc)
-		ctl->stop_fnc(ctl, MDSS_PANEL_POWER_OFF);
+		ctl->stop_fnc(ctl);
 
 	mdss_mdp_ctl_free(ctl);
 
@@ -1718,49 +1717,24 @@ int mdss_mdp_ctl_intf_event(struct mdss_mdp_ctl *ctl, int event, void *arg)
 	return rc;
 }
 
-static void mdss_mdp_ctl_restore_sub(struct mdss_mdp_ctl *ctl)
+/*
+ * mdss_mdp_ctl_restore() - restore mdp ctl path
+ * @ctl: mdp controller.
+ *
+ * This function is called whenever MDP comes out of a power collapse as
+ * a result of a screen update when DSI ULPS mode is enabled. It restores
+ * the MDP controller's software state to the hardware registers.
+ */
+void mdss_mdp_ctl_restore(struct mdss_mdp_ctl *ctl)
 {
 	u32 temp;
 
+	mdss_mdp_clk_ctrl(MDP_BLOCK_POWER_ON, false);
 	temp = readl_relaxed(ctl->mdata->mdp_base +
 		MDSS_MDP_REG_DISP_INTF_SEL);
 	temp |= (ctl->intf_type << ((ctl->intf_num - MDSS_MDP_INTF0) * 8));
 	writel_relaxed(temp, ctl->mdata->mdp_base +
 		MDSS_MDP_REG_DISP_INTF_SEL);
-}
-
-/*
- * mdss_mdp_ctl_restore() - restore mdp ctl path
- *
- * This function is called whenever MDP comes out of a power collapse as
- * a result of a screen update. It restores the MDP controller's software
- * state to the hardware registers.
- */
-void mdss_mdp_ctl_restore(void)
-{
-	struct mdss_mdp_ctl *ctl = NULL;
-	struct mdss_mdp_ctl *sctl;
-	struct mdss_data_type *mdata = mdss_mdp_get_mdata();
-	u32 cnum;
-
-	mdss_mdp_clk_ctrl(MDP_BLOCK_POWER_ON, false);
-	for (cnum = MDSS_MDP_CTL0; cnum < mdata->nctl; cnum++) {
-		ctl = mdata->ctl_off + cnum;
-		if (!mdss_mdp_ctl_is_power_on(ctl))
-			continue;
-
-		pr_debug("restoring ctl%d, intf_type=%d\n", cnum,
-			ctl->intf_type);
-		ctl->play_cnt = 0;
-		sctl = mdss_mdp_get_split_ctl(ctl);
-		mdss_mdp_ctl_restore_sub(ctl);
-		if (sctl) {
-			mdss_mdp_ctl_restore_sub(sctl);
-			mdss_mdp_ctl_split_display_enable(1, ctl, sctl);
-		}
-		if (ctl->restore_fnc)
-			ctl->restore_fnc(ctl);
-	}
 	mdss_mdp_clk_ctrl(MDP_BLOCK_POWER_OFF, false);
 }
 
@@ -1824,9 +1798,7 @@ int mdss_mdp_ctl_start(struct mdss_mdp_ctl *ctl, bool handoff)
 	struct mdss_data_type *mdata = mdss_mdp_get_mdata();
 	int ret = 0;
 
-	pr_debug("ctl_num=%d, power_state=%d\n", ctl->num, ctl->power_state);
-
-	if (mdss_mdp_ctl_is_power_on_interactive(ctl)) {
+	if (ctl->power_on) {
 		pr_debug("%d: panel already on!\n", __LINE__);
 		return 0;
 	}
@@ -1839,15 +1811,14 @@ int mdss_mdp_ctl_start(struct mdss_mdp_ctl *ctl, bool handoff)
 
 	mutex_lock(&ctl->lock);
 
-	if (mdss_mdp_ctl_is_power_off(ctl))
-		memset(&ctl->cur_perf, 0, sizeof(ctl->cur_perf));
-
 	/*
 	 * keep power_on false during handoff to avoid unexpected
 	 * operations to overlay.
 	 */
 	if (!handoff)
-		ctl->power_state = MDSS_PANEL_POWER_ON;
+		ctl->power_on = true;
+
+	memset(&ctl->cur_perf, 0, sizeof(ctl->cur_perf));
 
 	mdss_mdp_clk_ctrl(MDP_BLOCK_POWER_ON, false);
 
@@ -1877,28 +1848,28 @@ int mdss_mdp_ctl_start(struct mdss_mdp_ctl *ctl, bool handoff)
 	}
 	mdss_mdp_hist_intr_setup(&mdata->hist_intr, MDSS_IRQ_RESUME);
 
-error:
 	mdss_mdp_clk_ctrl(MDP_BLOCK_POWER_OFF, false);
+error:
 	mutex_unlock(&ctl->lock);
 
 	return ret;
 }
 
-int mdss_mdp_ctl_stop(struct mdss_mdp_ctl *ctl, int power_state)
+int mdss_mdp_ctl_stop(struct mdss_mdp_ctl *ctl)
 {
 	struct mdss_mdp_ctl *sctl;
 	int ret = 0;
 	struct mdss_data_type *mdata = mdss_mdp_get_mdata();
 	u32 off;
 
-	pr_debug("ctl_num=%d, power_state=%d\n", ctl->num, ctl->power_state);
-
-	if (!mdss_mdp_ctl_is_power_on(ctl)) {
+	if (!ctl->power_on) {
 		pr_debug("%s %d already off!\n", __func__, __LINE__);
 		return 0;
 	}
 
 	sctl = mdss_mdp_get_split_ctl(ctl);
+
+	pr_debug("ctl_num=%d\n", ctl->num);
 
 	mutex_lock(&ctl->lock);
 
@@ -1907,45 +1878,38 @@ int mdss_mdp_ctl_stop(struct mdss_mdp_ctl *ctl, int power_state)
 	mdss_mdp_hist_intr_setup(&mdata->hist_intr, MDSS_IRQ_SUSPEND);
 
 	if (ctl->stop_fnc)
-		ret = ctl->stop_fnc(ctl, power_state);
+		ret = ctl->stop_fnc(ctl);
 	else
 		pr_warn("no stop func for ctl=%d\n", ctl->num);
 
 	if (sctl && sctl->stop_fnc) {
-		ret = sctl->stop_fnc(sctl, power_state);
+		ret = sctl->stop_fnc(sctl);
+
+		mdss_mdp_ctl_split_display_enable(0, ctl, sctl);
 	}
+
 	if (ret) {
 		pr_warn("error powering off intf ctl=%d\n", ctl->num);
-		goto end;
+	} else {
+		mdss_mdp_ctl_write(ctl, MDSS_MDP_REG_CTL_TOP, 0);
+		if (sctl)
+			mdss_mdp_ctl_write(sctl, MDSS_MDP_REG_CTL_TOP, 0);
+
+		if (ctl->mixer_left) {
+			off = __mdss_mdp_ctl_get_mixer_off(ctl->mixer_left);
+			mdss_mdp_ctl_write(ctl, off, 0);
+		}
+
+		if (ctl->mixer_right) {
+			off = __mdss_mdp_ctl_get_mixer_off(ctl->mixer_right);
+			mdss_mdp_ctl_write(ctl, off, 0);
+		}
+
+		ctl->power_on = false;
+		ctl->play_cnt = 0;
+		mdss_mdp_ctl_perf_update(ctl, 0);
 	}
 
-	if (mdss_panel_is_power_on(power_state)) {
-		pr_debug("panel is not off, leaving ctl power on\n");
-		goto end;
-	}
-
-	if (sctl)
-		mdss_mdp_ctl_split_display_enable(0, ctl, sctl);
-
-	mdss_mdp_ctl_write(ctl, MDSS_MDP_REG_CTL_TOP, 0);
-	if (sctl)
-		mdss_mdp_ctl_write(sctl, MDSS_MDP_REG_CTL_TOP, 0);
-
-	if (ctl->mixer_left) {
-		off = __mdss_mdp_ctl_get_mixer_off(ctl->mixer_left);
-		mdss_mdp_ctl_write(ctl, off, 0);
-	}
-
-	if (ctl->mixer_right) {
-		off = __mdss_mdp_ctl_get_mixer_off(ctl->mixer_right);
-		mdss_mdp_ctl_write(ctl, off, 0);
-	}
-
-	ctl->power_state = power_state;
-	ctl->play_cnt = 0;
-	mdss_mdp_ctl_perf_update(ctl, 0);
-
-end:
 	mdss_mdp_clk_ctrl(MDP_BLOCK_POWER_OFF, false);
 
 	mutex_unlock(&ctl->lock);
@@ -2562,7 +2526,7 @@ int mdss_mdp_display_wait4comp(struct mdss_mdp_ctl *ctl)
 	if (ret)
 		return ret;
 
-	if (!mdss_mdp_ctl_is_power_on(ctl)) {
+	if (!ctl->power_on) {
 		mutex_unlock(&ctl->lock);
 		return 0;
 	}
@@ -2589,7 +2553,7 @@ int mdss_mdp_display_wait4pingpong(struct mdss_mdp_ctl *ctl)
 	if (ret)
 		return ret;
 
-	if (!mdss_mdp_ctl_is_power_on(ctl)) {
+	if (!ctl->power_on) {
 		mutex_unlock(&ctl->lock);
 		return 0;
 	}
@@ -2617,7 +2581,7 @@ int mdss_mdp_display_commit(struct mdss_mdp_ctl *ctl, void *arg)
 	mutex_lock(&ctl->lock);
 	pr_debug("commit ctl=%d play_cnt=%d\n", ctl->num, ctl->play_cnt);
 
-	if (!mdss_mdp_ctl_is_power_on(ctl)) {
+	if (!ctl->power_on) {
 		mutex_unlock(&ctl->lock);
 		return 0;
 	}
@@ -2740,7 +2704,7 @@ int mdss_mdp_get_ctl_mixers(u32 fb_num, u32 *mixer_id)
 	mdata = mdss_mdp_get_mdata();
 	for (i = 0; i < mdata->nctl; i++) {
 		ctl = mdata->ctl_off + i;
-		if ((mdss_mdp_ctl_is_power_on(ctl)) && (ctl->mfd) &&
+		if ((ctl->power_on) && (ctl->mfd) &&
 			(ctl->mfd->index == fb_num)) {
 			if (ctl->mixer_left) {
 				mixer_id[mixer_cnt] = ctl->mixer_left->num;

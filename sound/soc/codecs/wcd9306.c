@@ -512,8 +512,8 @@ static int tapan_put_anc_func(struct snd_kcontrol *kcontrol,
 		snd_soc_dapm_enable_pin(dapm, "EAR PA");
 		snd_soc_dapm_enable_pin(dapm, "EAR");
 	}
-	mutex_unlock(&dapm->codec->mutex);
 	snd_soc_dapm_sync(dapm);
+	mutex_unlock(&dapm->codec->mutex);
 	return 0;
 }
 
@@ -4207,20 +4207,6 @@ static struct snd_soc_dai_driver tapan9302_dai[] = {
 		.ops = &tapan_dai_ops,
 	},
 	{
-		.name = "tapan9302_rx3",
-		.id = AIF3_PB,
-		.playback = {
-			.stream_name = "AIF3 Playback",
-			.rates = WCD9302_RATES,
-			.formats = TAPAN_FORMATS,
-			.rate_min = 8000,
-			.rate_max = 48000,
-			.channels_min = 1,
-			.channels_max = 2,
-		},
-		.ops = &tapan_dai_ops,
-	},
-	{
 		.name = "tapan9302_tx3",
 		.id = AIF3_CAP,
 		.capture = {
@@ -4229,6 +4215,20 @@ static struct snd_soc_dai_driver tapan9302_dai[] = {
 			.formats = TAPAN_FORMATS,
 			.rate_max = 48000,
 			.rate_min = 8000,
+			.channels_min = 1,
+			.channels_max = 2,
+		},
+		.ops = &tapan_dai_ops,
+	},
+	{
+		.name = "tapan9302_rx3",
+		.id = AIF3_PB,
+		.playback = {
+			.stream_name = "AIF3 Playback",
+			.rates = WCD9302_RATES,
+			.formats = TAPAN_FORMATS,
+			.rate_min = 8000,
+			.rate_max = 48000,
 			.channels_min = 1,
 			.channels_max = 2,
 		},
@@ -4294,28 +4294,28 @@ static struct snd_soc_dai_driver tapan_dai[] = {
 		.ops = &tapan_dai_ops,
 	},
 	{
-		.name = "tapan_rx3",
-		.id = AIF3_PB,
-		.playback = {
-			.stream_name = "AIF3 Playback",
+		.name = "tapan_tx3",
+		.id = AIF3_CAP,
+		.capture = {
+			.stream_name = "AIF3 Capture",
 			.rates = WCD9306_RATES,
 			.formats = TAPAN_FORMATS,
+			.rate_max = 48000,
 			.rate_min = 8000,
-			.rate_max = 192000,
 			.channels_min = 1,
 			.channels_max = 2,
 		},
 		.ops = &tapan_dai_ops,
 	},
 	{
-		.name = "tapan_tx3",
-		.id = AIF3_CAP,
-		.capture = {
-			.stream_name = "AIF3 Capture",
+		.name = "tapan_rx3",
+		.id = AIF3_PB,
+		.playback = {
+			.stream_name = "AIF3 Playback",
 			.rates = WCD9306_RATES,
 			.formats = TAPAN_FORMATS_S16_S24_LE,
-			.rate_max = 48000,
 			.rate_min = 8000,
+			.rate_max = 192000,
 			.channels_min = 1,
 			.channels_max = 2,
 		},
@@ -5560,7 +5560,7 @@ static const struct tapan_reg_mask_val tapan_codec_reg_init_val[] = {
 	{TAPAN_A_CDC_CONN_MISC, 0x04, 0x04},
 
 	/* CLASS H config */
-	{TAPAN_A_CDC_CONN_CLSH_CTL, 0x30, 0x10},
+	{TAPAN_A_CDC_CONN_CLSH_CTL, 0x3C, 0x14},
 
 	/* Use 16 bit sample size for TX1 to TX5 */
 	{TAPAN_A_CDC_CONN_TX_SB_B1_CTL, 0x30, 0x20},
@@ -6058,6 +6058,8 @@ static int tapan_post_reset_cb(struct wcd9xxx *wcd9xxx)
 	codec = (struct snd_soc_codec *)(wcd9xxx->ssr_priv);
 	tapan = snd_soc_codec_get_drvdata(codec);
 
+	snd_soc_card_change_online_state(codec->card, 1);
+
 	mutex_lock(&codec->mutex);
 	if (codec->reg_def_copy) {
 		pr_debug("%s: Update ASOC cache", __func__);
@@ -6070,10 +6072,6 @@ static int tapan_post_reset_cb(struct wcd9xxx *wcd9xxx)
 			return -ENOMEM;
 		}
 	}
-
-	tapan->machine_codec_event_cb(codec, WCD9XXX_CODEC_EVENT_CODEC_UP);
-
-	snd_soc_card_change_online_state(codec->card, 1);
 
 	if (spkr_drv_wrnd == 1)
 		snd_soc_update_bits(codec, TAPAN_A_SPKR_DRV_EN, 0x80, 0x80);
@@ -6109,6 +6107,8 @@ static int tapan_post_reset_cb(struct wcd9xxx *wcd9xxx)
 	ret = tapan_setup_irqs(tapan);
 	if (ret)
 		pr_err("%s: Failed to setup irq: %d\n", __func__, ret);
+
+	tapan->machine_codec_event_cb(codec, WCD9XXX_CODEC_EVENT_CODEC_UP);
 
 	for (count = 0; count < NUM_CODEC_DAIS; count++)
 		tapan->dai[count].bus_down_in_recovery = true;
@@ -6408,8 +6408,8 @@ static int tapan_codec_probe(struct snd_soc_codec *codec)
 		snd_soc_dapm_disable_pin(dapm, "ANC EAR PA");
 		snd_soc_dapm_disable_pin(dapm, "ANC EAR");
 	}
-	mutex_unlock(&dapm->codec->mutex);
 	snd_soc_dapm_sync(dapm);
+	mutex_unlock(&dapm->codec->mutex);
 
 	codec->ignore_pmdown_time = 1;
 
