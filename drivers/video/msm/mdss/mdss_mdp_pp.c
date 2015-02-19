@@ -1761,6 +1761,7 @@ int mdss_mdp_pp_resume(struct mdss_mdp_ctl *ctl, u32 dspp_num)
 		pr_warn("invalid dspp_num");
 		return -EINVAL;
 	}
+
 	disp_num = ctl->mfd->index;
 	pp_sts = mdss_pp_res->pp_disp_sts[disp_num];
 
